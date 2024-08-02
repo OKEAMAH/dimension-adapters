@@ -28,7 +28,7 @@
     "axios": "^1.6.5",
     "bignumber.js": "^9.1.0",
     "dotenv": "^16.0.3",
-    "ethers": "^6.9.2",
+    "ethers": "^6.13.1",
     "graphql": "^16.6.0",
     "graphql-request": "5.1.0",
     "pg": "^8.11.3",
