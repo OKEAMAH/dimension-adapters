@@ -1,51 +1,68 @@
-import { Chain } from "@defillama/sdk/build/general";
-import { SimpleAdapter } from "../../adapters/types";
+import { BaseAdapter, FetchOptions, FetchResultV2, SimpleAdapter } from "../../adapters/types";
 import { CHAIN } from "../../helpers/chains";
-import customBackfill from "../../helpers/customBackfill";
-import { getUniqStartOfTodayTimestamp } from "../../helpers/getUniSubgraphVolume";
 import { httpGet } from "../../utils/fetchURL";
 
-const historicalVolumeEndpoint = "https://api.dexalot.com/api/stats/dailyvolumes"
+const historicalVolumeEndpoint = "https://api.dexalot.com/api/stats/chaindailyvolumes"
 
 interface IVolumeall {
   volumeusd: string;
   date: number;
 }
 
-const fetch = async (timestamp: number) => {
-  const dayTimestamp = getUniqStartOfTodayTimestamp(new Date(timestamp * 1000))
-  const historicalVolume: IVolumeall[] = (await httpGet(historicalVolumeEndpoint, { headers: {
-    'origin': 'https://app.dexalot.com'
-  }}))
-  const totalVolume = historicalVolume
-    .filter(volItem => (new Date(volItem.date).getTime() / 1000) <= dayTimestamp)
-    .reduce((acc, { volumeusd }) => acc + Number(volumeusd), 0)
+const supportedChains = [CHAIN.DEXALOT, CHAIN.AVAX, CHAIN.ARBITRUM, CHAIN.BASE]
 
-  const dailyVolume = historicalVolume
-    .find(dayItem => (new Date(dayItem.date).getTime() / 1000) === dayTimestamp)?.volumeusd
+const chainToEnv = (chain: CHAIN) => {
+  switch (chain) {
+    case CHAIN.AVAX:
+      return "production-multi-avax"
+    case CHAIN.ARBITRUM:
+      return "production-multi-arb"
+    case CHAIN.BASE:
+      return "production-multi-base"
+    default:
+      return "production-multi-subnet"
+  }
+}
 
-  return {
-    totalVolume: `${totalVolume}`,
-    dailyVolume: dailyVolume ? `${dailyVolume}` : undefined,
-    timestamp: dayTimestamp,
-  };
+const fetchFromChain = (chain: CHAIN) => {
+  const endpoint = `${historicalVolumeEndpoint}?env=${chainToEnv(chain)}`
+
+  return async (options: FetchOptions): Promise<FetchResultV2> => {
+    const dayTimestamp = new Date(options.startOfDay * 1000)
+    const historicalVolume: IVolumeall[] = await httpGet(endpoint)
+
+    const totalVolume = historicalVolume
+      .filter(volItem => new Date(volItem.date) <= dayTimestamp)
+      .reduce((acc, { volumeusd }) => acc + Number(volumeusd), 0)
+    const dailyVolume = historicalVolume
+      .find(dayItem => new Date(dayItem.date) === dayTimestamp)?.volumeusd
+
+    return {
+      totalVolume: `${totalVolume}`,
+      dailyVolume: dailyVolume ? `${dailyVolume}` : undefined,
+    };
+  }
 };
 
-const getStartTimestamp = async () => {
-  const historicalVolume: IVolumeall[] = (await httpGet(historicalVolumeEndpoint, { headers: {
-    'origin': 'https://app.dexalot.com'
-  }}))
-  return (new Date(historicalVolume[0].date).getTime()) / 1000
+const getStartTimestamp = (chain: CHAIN) => {
+  const endpoint = `${historicalVolumeEndpoint}?env=${chainToEnv(chain)}`
+  return async () => {
+    const historicalVolume: IVolumeall[] = await httpGet(endpoint)
+    return (new Date(historicalVolume[0].date).getTime()) / 1000
+  }
 }
 
 const adapter: SimpleAdapter = {
-  adapter: {
-    [CHAIN.AVAX]: {
-      fetch,
-      start: getStartTimestamp,
-      customBackfill: customBackfill(CHAIN.AVAX as Chain, (_chian: string) => fetch)
-    },
-  },
+  version: 2,
+  adapter: supportedChains.reduce((acc, chain) => {
+    return {
+      ...acc,
+      [chain]: {
+        fetch: fetchFromChain(chain),
+        start: getStartTimestamp(chain),
+      }
+    }
+  }, {} as BaseAdapter),
 };
 
 export default adapter;
